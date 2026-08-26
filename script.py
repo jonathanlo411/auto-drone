@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import platform
+import shutil
 import subprocess
 import sys
 import time
@@ -38,9 +40,15 @@ def parse_time(value: str) -> float:
 	return seconds
 
 
-def play_audio(audio_file: Path) -> None:
-	"""Play one recording and wait until Windows finishes playing it."""
-	powershell_script = r"""
+def get_play_command(audio_file: Path, system_name: str | None = None) -> list[str]:
+	"""Return the command needed to play an M4A file on the current operating system."""
+	system_name = (system_name or platform.system()).lower()
+
+	if system_name == "darwin":
+		return ["afplay", str(audio_file)]
+
+	if system_name.startswith("win"):
+		powershell_script = r"""
 Add-Type -AssemblyName PresentationCore
 $player = New-Object System.Windows.Media.MediaPlayer
 $path = (Resolve-Path -LiteralPath $env:AUTO_DRONE_AUDIO_FILE).Path
@@ -53,8 +61,7 @@ Start-Sleep -Milliseconds ([int]($player.NaturalDuration.TimeSpan.TotalMilliseco
 $player.Stop()
 $player.Close()
 """
-	subprocess.run(
-		[
+		return [
 			"powershell.exe",
 			"-NoProfile",
 			"-NonInteractive",
@@ -62,10 +69,35 @@ $player.Close()
 			"Bypass",
 			"-Command",
 			powershell_script,
-		],
-		check=True,
-		env={**os.environ, "AUTO_DRONE_AUDIO_FILE": str(audio_file)},
+		]
+
+	if system_name.startswith("linux"):
+		for exe in ("ffplay", "mpg123", "play"):
+			if shutil.which(exe):
+				if exe == "ffplay":
+					return [exe, "-nodisp", "-autoexit", "-loglevel", "quiet", str(audio_file)]
+				if exe == "mpg123":
+					return [exe, "-q", str(audio_file)]
+				return [exe, "-q", str(audio_file)]
+
+	raise RuntimeError(
+		f"Unsupported operating system: {platform.system()}. "
+		"This script supports macOS, Windows, and Linux with common M4A-capable players."
 	)
+
+
+def play_audio(audio_file: Path) -> None:
+	"""Play one recording and wait for the configured platform to finish."""
+	command = get_play_command(audio_file)
+	if command[0].lower() == "powershell.exe":
+		subprocess.run(
+			command,
+			check=True,
+			env={**os.environ, "AUTO_DRONE_AUDIO_FILE": str(audio_file)},
+		)
+		return
+
+	subprocess.run(command, check=True)
 
 
 def run_schedule(audio_file: Path, interval: float, duration: float, dry_run: bool) -> None:
@@ -128,7 +160,10 @@ def main() -> int:
 	except KeyboardInterrupt:
 		print("\nStopped.")
 	except FileNotFoundError:
-		print("PowerShell was not found; this script requires Windows PowerShell.", file=sys.stderr)
+		print("No supported audio player was found for this system.", file=sys.stderr)
+		return 1
+	except RuntimeError as error:
+		print(str(error), file=sys.stderr)
 		return 1
 	except subprocess.CalledProcessError as error:
 		print(f"Playback failed with exit code {error.returncode}.", file=sys.stderr)
