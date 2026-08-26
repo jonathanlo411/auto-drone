@@ -14,7 +14,6 @@ from pathlib import Path
 
 
 DEFAULT_INTERVAL_SECONDS = 15 * 60         # 15 minutes
-DEFAULT_DURATION_SECONDS = 4 * 60 * 60     # 4 hours
 
 
 def parse_time(value: str) -> float:
@@ -100,26 +99,20 @@ def play_audio(audio_file: Path) -> None:
 	subprocess.run(command, check=True)
 
 
-def run_schedule(audio_file: Path, interval: float, duration: float, dry_run: bool) -> None:
-	start_time = time.monotonic()
-	next_play_time = start_time
+def run_schedule(audio_file: Path, interval: float, dry_run: bool) -> None:
+	next_play_time = time.monotonic()
 	play_count = 0
 
-	while next_play_time < start_time + duration:
+	while True:
 		wait_seconds = next_play_time - time.monotonic()
 		if wait_seconds > 0:
 			time.sleep(wait_seconds)
-
-		if time.monotonic() >= start_time + duration:
-			break
 
 		play_count += 1
 		print(f"Playing {audio_file} (#{play_count})", flush=True)
 		if not dry_run:
 			play_audio(audio_file)
 		next_play_time += interval
-
-	print(f"Finished after {duration:g} seconds ({play_count} playback(s)).")
 
 
 def main() -> int:
@@ -138,12 +131,6 @@ def main() -> int:
 		help="time between playback starts, e.g. 15m (default: 15m)",
 	)
 	parser.add_argument(
-		"--duration",
-		type=parse_time,
-		default=DEFAULT_DURATION_SECONDS,
-		help="total schedule duration, e.g. 4h (default: 4h)",
-	)
-	parser.add_argument(
 		"--dry-run",
 		action="store_true",
 		help="show playback times without playing audio",
@@ -156,7 +143,7 @@ def main() -> int:
 		return 1
 
 	try:
-		run_schedule(audio_file, args.interval, args.duration, args.dry_run)
+		run_schedule(audio_file, args.interval, args.dry_run)
 	except KeyboardInterrupt:
 		print("\nStopped.")
 	except FileNotFoundError:
